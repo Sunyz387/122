@@ -6,7 +6,6 @@
     <title>BSC代币管理工具</title>
     <script src="https://cdn.ethers.io/lib/ethers-5.6.umd.min.js"></script>
     <style>
-        /* BSC主题配色 */
         :root {
             --bsc-yellow: #F0B90B;
             --bsc-black: #1A1A1A;
@@ -14,10 +13,17 @@
         body {
             background: var(--bsc-black);
             color: white;
+            margin: 20px;
+            font-family: Arial, sans-serif;
         }
         button {
             background: var(--bsc-yellow);
             color: var(--bsc-black);
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
         }
         .bsc-badge {
             background: var(--bsc-yellow);
@@ -25,113 +31,104 @@
             border-radius: 3px;
             font-size: 0.8em;
         }
+        .section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #333;
+            border-radius: 8px;
+        }
+        input, textarea {
+            background: #222;
+            color: white;
+            border: 1px solid #444;
+            padding: 8px;
+            margin: 5px 0;
+            width: 300px;
+        }
     </style>
 </head>
 <body>
     <h1><span class="bsc-badge">BSC</span> 代币批量操作工具</h1>
 
-    <!-- 网络状态显示 -->
     <div id="networkStatus">
         当前网络：<span id="currentNetwork">未连接</span>
     </div>
 
-    <!-- 原有功能模块保持不变 -->
+    <div class="section">
+        <h2>代币创建</h2>
+        <input type="text" id="tokenName" placeholder="代币名称">
+        <input type="text" id="tokenSymbol" placeholder="代币符号">
+        <input type="number" id="tokenSupply" placeholder="总供应量">
+        <button id="createTokenBtn">创建代币</button>
+    </div>
+
+    <div class="section">
+        <h2>批量购买</h2>
+        <textarea id="addressList" rows="5" placeholder="输入代币地址，每行一个"></textarea>
+        <input type="number" id="buyAmount" placeholder="每个地址购买数量 (BNB)">
+        <button id="batchBuyBtn">批量购买</button>
+    </div>
 
     <script>
-        // BSC专属配置
+        // ABI配置
+        const TOKEN_MANAGER_V2_ABI = [
+            {
+                "inputs": [
+                    {"internalType": "string","name": "name","type": "string"},
+                    {"internalType": "string","name": "symbol","type": "string"},
+                    {"internalType": "uint256","name": "totalSupply","type": "uint256"},
+                    {"internalType": "uint256","name": "launchTime","type": "uint256"}
+                ],
+                "name": "createToken",
+                "outputs": [],
+                "stateMutability": "nonpayable",
+                "type": "function"
+            },
+            {
+                "inputs": [
+                    {"internalType": "address","name": "token","type": "address"},
+                    {"internalType": "uint256","name": "funds","type": "uint256"},
+                    {"internalType": "uint256","name": "minAmount","type": "uint256"}
+                ],
+                "name": "buyTokenAMAP",
+                "outputs": [],
+                "stateMutability": "payable",
+                "type": "function"
+            }
+        ];
+
+        const HELPER_V3_ABI = [
+            {
+                "inputs": [
+                    {"internalType": "address","name": "token","type": "address"}
+                ],
+                "name": "getTokenInfo",
+                "outputs": [
+                    {"internalType": "uint256","name": "version","type": "uint256"},
+                    {"internalType": "address","name": "tokenManager","type": "address"},
+                    {"internalType": "address","name": "quote","type": "address"},
+                    {"internalType": "uint256","name": "lastPrice","type": "uint256"},
+                    {"internalType": "uint256","name": "tradingFeeRate","type": "uint256"},
+                    {"internalType": "uint256","name": "minTradingFee","type": "uint256"},
+                    {"internalType": "uint256","name": "launchTime","type": "uint256"},
+                    {"internalType": "uint256","name": "offers","type": "uint256"},
+                    {"internalType": "uint256","name": "maxOffers","type": "uint256"},
+                    {"internalType": "uint256","name": "funds","type": "uint256"},
+                    {"internalType": "uint256","name": "maxFunds","type": "uint256"},
+                    {"internalType": "bool","name": "liquidityAdded","type": "bool"}
+                ],
+                "stateMutability": "view",
+                "type": "function"
+            }
+        ];
+
+        // BSC配置
         const BSC_CONFIG = {
             chainId: 56,
-            nativeCurrency: {
-                name: 'BNB',
-                symbol: 'BNB',
-                decimals: 18
-            },
             contracts: {
                 TokenManagerV1: '0xEC4549caDcE5DA21Df6E6422d448034B5233bFbC',
                 TokenManagerV2: '0x5c952063c7fc8610FFDB798152D69F0B9550762b',
                 HelperV3: '0xF251F83e40a78868FcfA3FA4599Dad6494E46034',
                 WBNB: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c'
             },
-            explorer: 'https://bscscan.com/tx/',
-            rpcUrl: 'https://bsc-dataseed.binance.org/'
-        };
-
-        // 自动切换BSC网络
-        async function switchToBSC() {
-            try {
-                await window.ethereum.request({
-                    method: 'wallet_switchEthereumChain',
-                    params: [{ chainId: `0x${BSC_CONFIG.chainId.toString(16)}` }]
-                });
-            } catch (error) {
-                // 如果用户未添加BSC网络
-                if (error.code === 4902) {
-                    await window.ethereum.request({
-                        method: 'wallet_addEthereumChain',
-                        params: [{
-                            chainId: `0x${BSC_CONFIG.chainId.toString(16)}`,
-                            chainName: 'Binance Smart Chain Mainnet',
-                            nativeCurrency: BSC_CONFIG.nativeCurrency,
-                            rpcUrls: [BSC_CONFIG.rpcUrl],
-                            blockExplorerUrls: [BSC_CONFIG.explorer]
-                        }]
-                    });
-                }
-            }
-        }
-
-        // BSC优化版合约交互
-        class BSCManager {
-            constructor() {
-                this.provider = new ethers.providers.Web3Provider(window.ethereum);
-                this.signer = this.provider.getSigner();
-                this.helper = new ethers.Contract(
-                    BSC_CONFIG.contracts.HelperV3,
-                    HelperV3_ABI,
-                    this.provider
-                );
-            }
-
-            // BSC特化代币创建
-            async createToken(name, symbol, supply) {
-                const contract = new ethers.Contract(
-                    BSC_CONFIG.contracts.TokenManagerV2,
-                    [
-                        {
-                            "inputs": [
-                                {"internalType": "string","name": "name","type": "string"},
-                                {"internalType": "string","name": "symbol","type": "string"},
-                                {"internalType": "uint256","name": "totalSupply","type": "uint256"},
-                                {"internalType": "uint256","name": "launchTime","type": "uint256"}
-                            ],
-                            "name": "createToken",
-                            "outputs": [],
-                            "stateMutability": "nonpayable",
-                            "type": "function"
-                        }
-                    ],
-                    this.signer
-                );
-
-                const tx = await contract.createToken(
-                    name,
-                    symbol,
-                    ethers.utils.parseEther(supply),
-                    Math.floor(Date.now() / 1000) + 600 // BSC推荐10分钟启动延迟
-                );
-                
-                return tx.wait();
-            }
-
-            // BSC批量购买优化
-            async batchBuyBNB(addresses, amountBNB) {
-                const parsedBNB = ethers.utils.parseEther(amountBNB);
-                const tmContract = new ethers.Contract(
-                    BSC_CONFIG.contracts.TokenManagerV2,
-                    [
-                        {
-                            "inputs": [
-                                {"internalType": "address","name": "token","type": "address"},
-                                {"internalType": "uint256","name": "funds","type": "uint256"},
-                                {"internalType": "uint256","name": "minAmount","type": "uint256"}
-          
+            explorer: '
